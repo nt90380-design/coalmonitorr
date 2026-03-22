@@ -27,6 +27,13 @@ import shutil
 import subprocess
 import urllib.request
 
+import numpy as np
+try:
+    from scipy.interpolate import CubicSpline as _CubicSpline
+    _SCIPY = True
+except ImportError:
+    _SCIPY = False
+
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -73,6 +80,23 @@ def parse_fc03(data: bytes, expected_count: int):
         return None
     return [struct.unpack(">H", data[3 + i*2: 5 + i*2])[0]
             for i in range(expected_count)]
+
+
+def _spline(x_all, y_all, factor=8):
+    """Кубический сплайн для гладкой отрисовки. Без scipy — сырые данные."""
+    y = np.array(y_all, dtype=float)
+    x = np.array(x_all, dtype=float)
+    valid = ~np.isnan(y)
+    if valid.sum() < 4:
+        return x[valid], y[valid]
+    xv, yv = x[valid], y[valid]
+    if _SCIPY:
+        try:
+            x_fine = np.linspace(xv[0], xv[-1], len(xv) * factor)
+            return x_fine, _CubicSpline(xv, yv)(x_fine)
+        except Exception:
+            pass
+    return xv, yv
 
 
 # ---------------------------------------------------------------------------
@@ -1246,8 +1270,10 @@ class CoalMonitor:
             self.val_labels[i]._name_lbl.config(bg=bg_c)
             self.val_cells[i].config(bg=bg_c)
 
-            # Линия на графике
-            self.lines[i].set_ydata(list(self.history[i]))
+            # Линия на графике (кубический сплайн)
+            _xs, _ys = _spline(self.x_data, list(self.history[i]))
+            self.lines[i].set_xdata(_xs)
+            self.lines[i].set_ydata(_ys)
             # Тревога — подсветить линию толщиной
             if new_state != ALARM_NONE:
                 self.lines[i].set_linewidth(2.5)
@@ -1261,7 +1287,9 @@ class CoalMonitor:
                 and self._popup_idx is not None):
             pi   = self._popup_idx
             real = real_vals[pi]
-            self._popup_line.set_ydata(list(self.history[pi]))
+            _xs, _ys = _spline(self.x_data, list(self.history[pi]))
+            self._popup_line.set_xdata(_xs)
+            self._popup_line.set_ydata(_ys)
             text = f"{real:.1f}" if pi < 12 else f"{real:.0f}"
             self._popup_text.set_text(f"{text} {SIGNAL_UNITS[pi]}")
             alarm = self.alarm_state[pi]
@@ -1280,7 +1308,9 @@ class CoalMonitor:
         if self._all_win and self._all_win.winfo_exists():
             for i in range(NUM_DATA_REGS):
                 real = real_vals[i]
-                self._all_lines[i].set_ydata(list(self.history[i]))
+                _xs, _ys = _spline(self.x_data, list(self.history[i]))
+                self._all_lines[i].set_xdata(_xs)
+                self._all_lines[i].set_ydata(_ys)
                 text = f"{real:.1f}" if i < 12 else f"{real:.0f}"
                 self._all_lines[i]._val_text.set_text(f"{text} {SIGNAL_UNITS[i]}")
                 alarm = self.alarm_state[i]
