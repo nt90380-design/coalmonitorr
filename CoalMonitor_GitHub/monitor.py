@@ -117,7 +117,7 @@ LOG_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "LOGMODBUS")
 # Версия и автообновление
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # Автообновление через интернет (GitHub)
@@ -138,7 +138,7 @@ VERSION = "1.0.0"
 #
 # Оставьте пустым ("") чтобы ОТКЛЮЧИТЬ автообновление.
 # ---------------------------------------------------------------------------
-UPDATE_BASE_URL = ""
+UPDATE_BASE_URL = "https://raw.githubusercontent.com/nt90380-design/coalmonitorr/refs/heads/main/CoalMonitor_GitHub"
 
 
 def _parse_version(v: str):
@@ -217,7 +217,7 @@ class DemoSimulator:
 class CoalMonitor:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Modbus Coal Monitor")
+        self.root.title("Modbus Coal Monitor  v1.0.1")
         self.root.configure(bg="#1e1e1e")
 
         ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coal_monitor.ico")
