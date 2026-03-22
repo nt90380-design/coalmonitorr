@@ -138,7 +138,7 @@ VERSION = "1.0.1"
 #
 # Оставьте пустым ("") чтобы ОТКЛЮЧИТЬ автообновление.
 # ---------------------------------------------------------------------------
-UPDATE_BASE_URL = "https://raw.githubusercontent.com/nt90380-design/coalmonitorr/refs/heads/main/CoalMonitor_GitHub"
+UPDATE_BASE_URL = "https://raw.githubusercontent.com/nt90380-design/coalmonitorr/main/CoalMonitor_GitHub"
 
 
 def _parse_version(v: str):
