@@ -17,6 +17,7 @@ from tkinter import ttk, messagebox, colorchooser
 import serial
 import serial.tools.list_ports
 import struct
+import math
 import threading
 import time
 import random
@@ -84,8 +85,9 @@ def parse_fc03(data: bytes, expected_count: int):
 
 def _spline(x_all, y_all, factor=8):
     """Кубический сплайн для гладкой отрисовки. Без scipy — сырые данные."""
-    y = np.array(y_all, dtype=float)
-    x = np.array(x_all, dtype=float)
+    n = min(len(x_all), len(y_all))   # история может быть короче x_data в начале
+    y = np.array(y_all[:n], dtype=float)
+    x = np.array(x_all[:n], dtype=float)
     valid = ~np.isnan(y)
     if valid.sum() < 4:
         return x[valid], y[valid]
@@ -141,7 +143,7 @@ LOG_DIR = os.path.join(os.path.expanduser("~"), "Desktop", "LOGMODBUS")
 # Версия и автообновление
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 # ---------------------------------------------------------------------------
 # Автообновление через интернет (GitHub)
@@ -193,44 +195,32 @@ def _remote_version() -> str | None:
 # ---------------------------------------------------------------------------
 
 class DemoSimulator:
+    """Синусоидальная симуляция (точная копия логики прошивки контроллера)."""
     BASE_FLOW    = [500, 480, 520, 460, 540, 490, 510, 470, 530, 450, 500, 485]
+    AMP_FLOW     = [200, 200, 200, 180, 180, 180, 160, 160, 160, 150, 150, 150]
+    PERIOD_FLOW  = [30,  30,  30,  30,  30,  30,  30,  30,  30,  30,  30,  30]
     BASE_CALORIC = [5850, 6150]
+    AMP_CALORIC  = [500, 500]
+    PERIOD_CAL   = [60, 60]
 
     def __init__(self):
-        self._vals   = [float(b) for b in self.BASE_FLOW + self.BASE_CALORIC]
-        self._phase  = [random.uniform(0, 100) for _ in range(NUM_DATA_REGS)]
-        self._spike_t  = [0] * NUM_DATA_REGS
-        self._spike_tg = [0.0] * NUM_DATA_REGS
-        self._t = 0
+        self._ms = 0
 
-    def step(self) -> list:
-        self._t += 1
+    def step(self, interval_ms: float = 500) -> list:
+        self._ms += interval_ms
         result = []
-        for i in range(NUM_DATA_REGS):
-            is_flow = i < 12
-            base    = self.BASE_FLOW[i] if is_flow else self.BASE_CALORIC[i - 12]
-
-            self._phase[i] += random.uniform(0.5, 2.5)
-            drift = 60 * (0.5 - abs(((self._phase[i] % 100) / 100) - 0.5) * 2)
-            noise = random.gauss(0, 12 if is_flow else 5)
-
-            if self._spike_t[i] > 0:
-                self._vals[i] += (self._spike_tg[i] - self._vals[i]) * 0.25
-                self._spike_t[i] -= 1
-            else:
-                self._vals[i] += (base + drift - self._vals[i]) * 0.08 + noise
-                if random.random() < 0.03:
-                    anom = random.choice(["high", "low"])
-                    dur  = random.randint(8, 25)
-                    self._spike_t[i]  = dur
-                    factor = (random.uniform(1.6, 2.2) if anom == "high"
-                              else random.uniform(0.05, 0.25))
-                    if not is_flow:
-                        factor = 1.15 if anom == "high" else 0.87
-                    self._spike_tg[i] = base * factor
-
-            v = self._vals[i] + random.gauss(0, 3 if is_flow else 1.5)
+        for i in range(12):
+            period_ms = self.PERIOD_FLOW[i] * 1000
+            phase = self._ms / period_ms + i / 12.0
+            sine  = self.AMP_FLOW[i] * math.sin(2 * math.pi * phase)
+            v = self.BASE_FLOW[i] + sine
             result.append(max(Y_MIN[i], min(Y_MAX[i], v)))
+        for i in range(2):
+            period_ms = self.PERIOD_CAL[i] * 1000
+            phase = self._ms / period_ms + i / 2.0
+            sine  = self.AMP_CALORIC[i] * math.sin(2 * math.pi * phase)
+            v = self.BASE_CALORIC[i] + sine
+            result.append(max(Y_MIN[12 + i], min(Y_MAX[12 + i], v)))
         return result
 
 
@@ -241,7 +231,7 @@ class DemoSimulator:
 class CoalMonitor:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Modbus Coal Monitor  v1.0.2")
+        self.root.title("Modbus Coal Monitor  v1.0.3")
         self.root.configure(bg="#1e1e1e")
 
         ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coal_monitor.ico")
@@ -260,7 +250,7 @@ class CoalMonitor:
         self.demo = DemoSimulator()
 
         self.history = [
-            collections.deque([float(Y_MIN[i])] * HISTORY_LEN, maxlen=HISTORY_LEN)
+            collections.deque([float('nan')] * HISTORY_LEN, maxlen=HISTORY_LEN)
             for i in range(NUM_DATA_REGS)
         ]
         self.x_data      = list(range(HISTORY_LEN))
@@ -477,10 +467,11 @@ class CoalMonitor:
         # Легенда — все 14 сигналов
         h1, l1 = self.ax_left.get_legend_handles_labels()
         h2, l2 = self.ax_right.get_legend_handles_labels()
-        self.ax_left.legend(h1 + h2, l1 + l2,
-                            loc="upper left", fontsize=8, ncol=4,
-                            facecolor="#252525", edgecolor="#444",
-                            labelcolor="#ccc", framealpha=0.85)
+        leg = self.ax_left.legend(h1 + h2, l1 + l2,
+                                  loc="upper left", fontsize=8, ncol=4,
+                                  facecolor="#252525", edgecolor="#444",
+                                  labelcolor="#ccc", framealpha=0.85)
+        leg.set_draggable(True)
 
         canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         canvas.get_tk_widget().pack(fill="both", expand=True, padx=6, pady=(0, 0))
@@ -567,8 +558,9 @@ class CoalMonitor:
                    linestyle="--", alpha=0.7, label=f"Макс {ALARM_HIGH[idx]:.0f}")
         ax.axhline(ALARM_LOW[idx],  color="#2196F3", linewidth=1.2,
                    linestyle="--", alpha=0.7, label=f"Мин  {ALARM_LOW[idx]:.0f}")
-        ax.legend(loc="upper left", fontsize=9,
-                  facecolor="#252525", edgecolor="#444", labelcolor="#ccc")
+        leg = ax.legend(loc="upper left", fontsize=9,
+                        facecolor="#252525", edgecolor="#444", labelcolor="#ccc")
+        leg.set_draggable(True)
 
         color = self.line_colors[idx]
         (pop_line,) = ax.plot(self.x_data, list(self.history[idx]),
@@ -1412,9 +1404,14 @@ class CoalMonitor:
         try:
             url = UPDATE_BASE_URL.rstrip("/") + "/monitor.py"
             dst = os.path.abspath(__file__)
-            # Скачиваем во временный файл, потом заменяем
+            # Скачиваем во временный файл с заголовком no-cache (как в _remote_version)
+            # urlretrieve не посылает заголовков — GitHub CDN отдаёт старый кеш
             tmp = dst + ".update"
-            urllib.request.urlretrieve(url, tmp)
+            req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = r.read()
+            with open(tmp, "wb") as f:
+                f.write(data)
             shutil.move(tmp, dst)
             subprocess.Popen([sys.executable, dst])
             self.root.after(300, sys.exit)
